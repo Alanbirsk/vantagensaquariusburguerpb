@@ -1,1 +1,267 @@
 # vantagensaquariusburguerpb
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Aquários Burguer - Lucky Tiger</title>
+    
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        :root {
+            --item-h: 100px; --reel-w: 85px;
+            --gold: #ffcc00; --neon-green: #39ff14;
+        }
+        @media (min-height: 700px) { :root { --item-h: 120px; --reel-w: 110px; } }
+
+        body {
+            margin: 0; background: #05000a; color: white;
+            font-family: 'Arial Black', sans-serif; height: 100vh;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            overflow: hidden;
+        }
+
+        .painel-giros {
+            background: rgba(255,255,255,0.05); padding: 15px; border-radius: 20px;
+            border: 2px solid var(--gold); margin-bottom: 20px; text-align: center; width: 85vw; max-width: 320px;
+        }
+
+        .machine-wrap {
+            position: relative; padding: 15px; background: linear-gradient(180deg, #333, #111); 
+            border-radius: 30px; border: 4px solid var(--gold); box-shadow: 0 0 40px rgba(255, 204, 0, 0.4);
+        }
+
+        .slot-grid { display: flex; gap: 8px; position: relative; }
+        
+        /* Linha indicadora central */
+        .slot-grid::after {
+            content: ""; position: absolute; top: 50%; left: -5%; width: 110%; height: 2px;
+            background: rgba(255, 204, 0, 0.5); z-index: 10; transform: translateY(-50%);
+        }
+
+        .reel-box {
+            width: var(--reel-w); height: calc(var(--item-h) * 3);
+            background: #000; overflow: hidden; border-radius: 15px; border: 2px solid #444;
+        }
+        
+        .reel-strip { display: flex; flex-direction: column; }
+        .symbol { 
+            height: var(--item-h); width: 100%; display: flex; 
+            align-items: center; justify-content: center; font-size: 28px; 
+            font-weight: 900; text-align: center; line-height: 1.1;
+        }
+
+        .s-low { color: #00d9ff; text-shadow: 0 0 10px #00d9ff; } 
+        .s-high { color: #ff007f; text-shadow: 0 0 10px #ff007f; }
+        .s-food { color: #ff8c00; font-size: 18px; text-shadow: 0 0 10px #ff8c00; } 
+        .s-logo { color: var(--gold); font-size: 14px; text-shadow: 0 0 15px var(--gold); }
+
+        .btn-spin {
+            margin-top: 25px; padding: 22px 0; width: 85vw; max-width: 320px;
+            font-size: 28px; background: radial-gradient(circle, #ffcc00, #ff8800);
+            color: black; border: none; border-radius: 50px; font-weight: bold;
+            box-shadow: 0 8px 0 #884400; cursor: pointer;
+        }
+
+        #jackpot-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.98);
+            z-index: 9999; flex-direction: column; align-items: center; justify-content: center; padding: 20px;
+        }
+
+        .prize-value { font-size: 40px; color: #fff; text-align: center; filter: drop-shadow(0 0 20px var(--gold)); margin: 15px 0; }
+        .regras { font-size: 13px; color: #ff4444; margin-bottom: 25px; text-align: center; }
+
+        .btn-claim {
+            background: #25d366; color: white; padding: 20px 40px; border-radius: 50px;
+            text-decoration: none; font-size: 20px; font-weight: bold; width: 80%; text-align: center;
+        }
+
+        .btn-continue {
+            background: none; border: 2px solid #444; color: #888; padding: 12px;
+            border-radius: 50px; margin-top: 20px; width: 80%; font-weight: bold;
+        }
+
+        .shake-screen { animation: tigerShake 0.1s infinite; }
+        @keyframes tigerShake { 0% { transform: translate(2px, 2px); } 50% { transform: translate(-2px, -2px); } 100% { transform: translate(2px, -2px); } }
+    </style>
+</head>
+<body>
+
+    <audio id="snd-track" src="https://codeskulptor-demos.commondatastorage.googleapis.com/descent/background%20music.mp3" loop></audio>
+    <audio id="snd-spin" src="https://assets.mixkit.co/active_storage/sfx/2006/2006-preview.mp3"></audio>
+    <audio id="snd-win" src="https://assets.mixkit.co/active_storage/sfx/1435/1435-preview.mp3"></audio>
+
+    <div class="painel-giros">
+        <div>SALDO: <b id="qtd-giros" style="color:var(--gold)">0</b> GIROS</div>
+        <div style="margin-top: 10px; display: flex; gap: 5px;">
+            <input type="text" id="inputCodigo" style="width:65%; padding:12px; border-radius:10px; border:none; background:#222; color:#fff;" placeholder="CÓDIGO">
+            <button onclick="processarCodigo()" style="background:var(--gold); border:none; padding:10px; width:35%; border-radius:10px; font-weight:bold;">ATIVAR</button>
+        </div>
+    </div>
+
+    <div class="machine-wrap" id="machine">
+        <div class="slot-grid">
+            <div class="reel-box"><div class="reel-strip" id="r1"></div></div>
+            <div class="reel-box"><div class="reel-strip" id="r2"></div></div>
+            <div class="reel-box"><div class="reel-strip" id="r3"></div></div>
+        </div>
+    </div>
+
+    <button class="btn-spin" id="spinBtn" onclick="jogar()" disabled>GIRAR</button>
+
+    <div id="jackpot-overlay">
+        <div style="font-size: 50px; color: var(--gold);">💰 GANHOU! 💰</div>
+        <div class="prize-value" id="prize-text">PRÊMIO!</div>
+        <div class="regras">
+            ⚠️ <b>PEDIDO IMEDIATO ATÉ R$ 70,00</b><br>
+            VÁLIDO SOMENTE AGORA!<br>
+            SE SAIR DO SITE, O PRÊMIO EXPIRA.
+        </div>
+        <a href="#" id="linkWA" target="_blank" class="btn-claim">RESGATAR NO WHATS</a>
+        <button class="btn-continue" onclick="fecharJackpot()">ABRIR MÃO E CONTINUAR</button>
+    </div>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyCY4gfjSaaDKNk8F-tPxJ_G3_sdJ4_Gjtc",
+        authDomain: "slot-de-descontos.firebaseapp.com",
+        databaseURL: "https://slot-de-descontos-default-rtdb.firebaseio.com",
+        projectId: "slot-de-descontos",
+        appId: "1:470485717213:web:3d5f4c0c79db64ad6e0b34"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let girosRestantes = 0;
+    const symbols = ["5%", "10%", "15%", "20%", "25%", "Batata", "Coca 600", "Entrega Grátis", "LOGO"];
+    const prizes = { 
+        "5%": "5% OFF", "10%": "10% OFF", "15%": "15% OFF", 
+        "20%": "20% OFF", "25%": "25% OFF", "Batata": "BATATA GRÁTIS", 
+        "Coca 600": "COCA 600ML", "Entrega Grátis": "ENTREGA GRÁTIS", "LOGO": "100% OFF" 
+    };
+
+    async function processarCodigo() {
+        const input = document.getElementById('inputCodigo').value.trim().toUpperCase();
+        if(!input) return;
+        document.getElementById('snd-track').play().catch(()=>{});
+        try {
+            const snap = await db.ref('codigos/' + input).get();
+            if(snap.exists() && !snap.val().usado) {
+                await db.ref('codigos/' + input).update({ usado: true });
+                girosRestantes += parseInt(snap.val().giros);
+                atualizarUI();
+            } else { alert("CÓDIGO INVÁLIDO"); }
+        } catch (e) { alert("ERRO"); }
+    }
+
+    function atualizarUI() {
+        document.getElementById('qtd-giros').innerText = girosRestantes;
+        document.getElementById('spinBtn').disabled = girosRestantes <= 0;
+    }
+
+    function getSymHTML(s) {
+        let classe = "s-low";
+        if(["20%", "25%", "LOGO"].includes(s)) classe = "s-high";
+        if(["Batata", "Coca 600", "Entrega Grátis"].includes(s)) classe = "s-food";
+        if(s === "LOGO") return `<div class="symbol s-logo">AQUÁRIOS<br>BURGUER</div>`;
+        return `<div class="symbol ${classe}">${s}</div>`;
+    }
+
+    function buildReel(id) {
+        const el = document.getElementById(id);
+        let content = "";
+        for(let i=0; i<100; i++) content += getSymHTML(symbols[Math.floor(Math.random()*symbols.length)]);
+        el.innerHTML = content;
+    }
+
+    function sortearResultado() {
+        const luck = Math.floor(Math.random() * 1000);
+        
+        // Paga menos vezes (Reduzi as chances de vitória real)
+        if (luck < 3) return { win: true, sym: "LOGO" }; // Jackpot raro
+        if (luck < 20) return { win: true, sym: "Coca 600" };
+        if (luck < 50) return { win: true, sym: "10%" };
+        if (luck < 100) return { win: true, sym: "5%" };
+
+        // Lógica de "QUASE GANHOU" (Near Miss)
+        // Se não ganhou, vamos forçar os dois primeiros rolos a serem um prêmio grande
+        if (luck < 400) {
+            const grande = symbols[Math.floor(Math.random() * 3) + 6]; // Pega LOGO, Coca ou Entrega
+            return { win: false, sym: grande, quase: true };
+        }
+
+        return { win: false, sym: symbols[Math.floor(Math.random()*symbols.length)], quase: false };
+    }
+
+    async function jogar() {
+        if(girosRestantes <= 0) return;
+        girosRestantes--; 
+        atualizarUI();
+
+        document.getElementById('snd-spin').currentTime = 0;
+        document.getElementById('snd-spin').play();
+        document.getElementById('spinBtn').disabled = true;
+
+        const res = sortearResultado();
+        let finalSet;
+
+        if(res.win) {
+            finalSet = [res.sym, res.sym, res.sym];
+        } else if(res.quase) {
+            // Dois primeiros iguais ao prêmio grande, o terceiro muda no final
+            finalSet = [res.sym, res.sym, symbols[Math.floor(Math.random()*5)]];
+        } else {
+            finalSet = [res.sym, symbols[0], symbols[1]];
+        }
+        
+        const stopPos = 80;
+        for(let n=1; n<=3; n++) {
+            const strip = document.getElementById(`r${n}`);
+            strip.style.transition = "none";
+            strip.style.transform = "translate3d(0,0,0)";
+            strip.getElementsByClassName('symbol')[stopPos+1].outerHTML = getSymHTML(finalSet[n-1]);
+        }
+
+        await new Promise(r => setTimeout(r, 50));
+        const itemH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--item-h'));
+        
+        for(let n=1; n<=3; n++) {
+            const el = document.getElementById(`r${n}`);
+            // O último rolo demora mais para dar suspense
+            const delay = n === 3 ? 2500 : 1200 + (n*400);
+            el.style.transition = `transform ${delay}ms cubic-bezier(0.1, 0, 0.1, 1)`;
+            el.style.transform = `translate3d(0, -${stopPos * itemH}px, 0)`;
+        }
+
+        setTimeout(() => {
+            if(res.win) {
+                lancarVitoria(prizes[res.sym]);
+            } else {
+                if(girosRestantes > 0) document.getElementById('spinBtn').disabled = false;
+                else alert("GIROS ESGOTADOS!");
+            }
+        }, 3500);
+    }
+
+    function lancarVitoria(texto) {
+        document.getElementById('snd-win').play();
+        document.body.classList.add('shake-screen');
+        confetti({ particleCount: 200, spread: 80, origin: { y: 0.6 } });
+        document.getElementById('prize-text').innerText = texto;
+        document.getElementById('linkWA').href = `https://wa.me/5546999241298?text=Ganhei%20${texto}%20no%20Aquários%20Burguer!`;
+        document.getElementById('jackpot-overlay').style.display = 'flex';
+    }
+
+    function fecharJackpot() {
+        document.getElementById('jackpot-overlay').style.display = 'none';
+        document.body.classList.remove('shake-screen');
+        if(girosRestantes > 0) document.getElementById('spinBtn').disabled = false;
+    }
+
+    buildReel('r1'); buildReel('r2'); buildReel('r3');
+</script>
+</body>
+</html>
